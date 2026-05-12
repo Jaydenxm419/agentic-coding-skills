@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This workflow is a portable, repeatable blueprint for software development projects of any type. It enforces clean architecture, test-first development, iterative design refinement, and continuous documentation synchronization. Every prompt file is designed to ask you targeted questions that eliminate ambiguity before a single line of code is written. A hierarchical task list (`docs/tasks.md`) is generated during design and actively maintained through implementation as the single source of truth for project progress.
+This workflow is a portable, repeatable blueprint for software development projects of any type. It enforces clean architecture, test-first development, iterative design refinement, and continuous documentation synchronization. Every prompt file is designed to ask you targeted questions that eliminate ambiguity before a single line of code is written. A hierarchical task list (`docs/tasks.md`) is generated during design and actively maintained through implementation as the single source of truth for project progress. Before any implementation work begins on a task, the agent runs a **Human Intervention Pre-Flight Check** that surfaces all non-code setup (account creation, API keys, webhooks, local services, IAM grants) and hard-stops until the developer confirms each item is complete.
 
 ## How to Use
 
@@ -60,9 +60,9 @@ The workflow follows a linear progression with iterative loops at specific stage
 | Order | Command | Purpose | Iterative? |
 |-------|---------|---------|------------|
 | 6 | `/test` | Generate test suites from the spec for a target milestone or task | Yes — per task |
-| 7 | `/implement` | Write code that passes the tests, check off subtasks in `docs/tasks.md` | Yes — per task |
+| 7 | `/implement` | Run Human Intervention Pre-Flight Check, then write code that passes the tests, then check off subtasks in `docs/tasks.md` | Yes — per task |
 
-**Cycle**: For every task: run `/test` first to create the test suite from the spec, then `/implement` to write code that passes those tests. The agent checks off subtasks in `docs/tasks.md` as tests pass, linking each to the implementation file. Repeat per task until the milestone is complete.
+**Cycle**: For every task: run `/test` first to create the test suite from the spec, then `/implement` to write code that passes those tests. `/implement` begins with a **Human Intervention Pre-Flight Check** that scans the Integration Registry, the test files, and the architecture/design specs to surface every non-code prerequisite (account creation, API key generation, webhook configuration, local services, IAM permissions, etc.). The checklist is persisted to `docs/tasks.md` under the target task as a `Human Setup:` field. The agent hard-stops and refuses to generate any code until the developer confirms every item is `[x]` in chat. Once cleared, the agent checks off subtasks in `docs/tasks.md` as tests pass, linking each to the implementation file. Repeat per task until the milestone is complete.
 
 ### Phase 3 — Maintenance & Sync (Ongoing)
 
@@ -96,7 +96,15 @@ The workflow follows a linear progression with iterative loops at specific stage
                                                              ┌─── [test ⟲] ◄──┐
                                                              │         │        │
                                                              │   [implement ⟲] ─┘
-                                                             │     ↓ checks off tasks.md
+                                                             │     │
+                                                             │     ├── Human Intervention
+                                                             │     │   Pre-Flight Check
+                                                             │     │   (HARD STOP until
+                                                             │     │   every [x] confirmed)
+                                                             │     │
+                                                             │     ├── Subtask implementation
+                                                             │     │
+                                                             │     └── Checks off tasks.md
                                                              │   tests pass?
                                                              │     yes │
                                                              │      [github-create-pr] (opens PR)
@@ -110,6 +118,48 @@ The workflow follows a linear progression with iterative loops at specific stage
 ```
 
 **⟲ = iterative** — the agent will continue asking questions and refining until you explicitly sign off or all checklist items are satisfied.
+
+---
+
+## The Human Intervention Pre-Flight Check
+
+Before `/implement` writes any code for a target task, it runs a Human Intervention Pre-Flight Check. This is a hard gate with no overrides.
+
+### What it does
+
+The agent scans three sources for non-code prerequisites:
+
+1. **Integration Registry** (`docs/integration-registry.md`) — for any subtask with an `Integration:` field, it pulls account requirements, API keys, webhook setup, OAuth registration, redirect URIs, domain verification, and plan/quota requirements.
+2. **Test files** (referenced by the target task's subtasks) — it scans for env var assertions, mock fixture requirements, local service dependencies, test database setup, and external test accounts (sandbox modes).
+3. **Architecture & design specs** — it scans for infrastructure prerequisites, deployment-target dependencies, auth-flow prerequisites, cross-cutting concerns (logging/monitoring project IDs), and design-driven third-party widget setup.
+
+### How it persists
+
+The resulting checklist is written to `docs/tasks.md` under the target task as a `Human Setup:` field. Each item is concrete and action-oriented, tagged with its source. Example:
+
+```markdown
+### T1.2 — OAuth Provider Integration
+- Status: NOT STARTED
+- Requirement refs: REQ-3, REQ-7
+- GitHub: issue #9
+- Human Setup:
+  - [ ] Create a Google Cloud project and enable the OAuth 2.0 client at https://console.cloud.google.com (Source: Integration Registry — Google OAuth)
+  - [ ] Add `http://localhost:3000/auth/callback` to the OAuth client's authorized redirect URIs (Source: Integration Registry — Google OAuth)
+  - [ ] Copy `GOOGLE_OAUTH_CLIENT_ID` and `GOOGLE_OAUTH_CLIENT_SECRET` into `.env` (Source: Tests — tests/auth/oauth.test.ts)
+  - [ ] Start the local Postgres instance on port 5432 (Source: Architecture — Section 2: Data Architecture)
+```
+
+### How it clears
+
+The developer confirms each item is complete in chat. The agent marks each `[x]` with a confirmation timestamp inline. Once every item is `[x]`, code generation begins. The checklist is preserved on the completed task as a historical record.
+
+### What if the developer disputes an item
+
+The agent walks through the source that triggered the item. If genuinely spurious, the item is removed with a brief note. If genuinely required, the agent holds the line — there are no overrides on this gate.
+
+### What if a missed item surfaces mid-implementation
+
+If a test fails because of an environmental issue (e.g., a service isn't running despite being marked `[x]`), the agent stops, adds the item back to the checklist as `[ ]`, and requests reconfirmation before resuming.
 
 ---
 
@@ -129,12 +179,13 @@ Milestone (M1, M2, ...)
 2. **Strict rollup**: A task is only `[x]` when ALL its subtasks are `[x]`. A milestone is only `[x]` when ALL its tasks are `[x]`. No partial credit.
 3. **Implementation references**: When a subtask is completed, the agent adds the file path where the implementation lives (e.g., `src/auth/login.ts`).
 4. **Test references**: Each subtask links to its corresponding test file.
-5. **GitHub references**: When `/github-init` runs (or is invoked by `/github-create-pr` or `/github-sync`), each milestone, task, and subtask gets a `GitHub:` field linking to its issue or milestone number.
-6. **PR references**: When `/github-create-pr` (or `/github-sync` invoking it) detects newly-completed subtasks, it groups them under the parent task and opens one PR per task. The `PR:` field is added inline for the parent task and each subtask included in that PR.
-7. **The `/implement` command reads `docs/tasks.md` before writing any code** to know what to build and to verify all prior subtasks in the current task are complete.
-8. **The `/implement` command writes to `docs/tasks.md` after passing tests** to check off subtasks and add implementation references.
-9. **Iterative updates**: If `/design` is re-run to refine the spec, `docs/tasks.md` is regenerated or updated to reflect changes. New items are appended; completed items are preserved.
-10. **Integration awareness**: Subtasks that involve external services reference the Integration Registry. The `/implement` command consults both `docs/tasks.md` and `docs/integration-registry.md` when working on these subtasks.
+5. **Human Setup field**: When `/implement` targets a task, it writes a `Human Setup:` field on that task containing every non-code prerequisite. The field persists after task completion as a historical record. See "The Human Intervention Pre-Flight Check" above.
+6. **GitHub references**: When `/github-init` runs (or is invoked by `/github-create-pr` or `/github-sync`), each milestone, task, and subtask gets a `GitHub:` field linking to its issue or milestone number.
+7. **PR references**: When `/github-create-pr` (or `/github-sync` invoking it) detects newly-completed subtasks, it groups them under the parent task and opens one PR per task. The `PR:` field is added inline for the parent task and each subtask included in that PR.
+8. **The `/implement` command reads `docs/tasks.md` before writing any code** to know what to build and to verify all prior subtasks in the current task are complete, AND to verify every `Human Setup:` item on the target task is `[x]`.
+9. **The `/implement` command writes to `docs/tasks.md` in two places**: before coding (the `Human Setup:` checklist on the target task) and after passing tests (`[x]`, `Impl:` paths, and status rollups).
+10. **Iterative updates**: If `/design` is re-run to refine the spec, `docs/tasks.md` is regenerated or updated to reflect changes. New items are appended; completed items are preserved.
+11. **Integration awareness**: Subtasks that involve external services reference the Integration Registry. The `/implement` command consults both `docs/tasks.md` and `docs/integration-registry.md` when working on these subtasks.
 
 ### Example Structure
 
@@ -147,6 +198,9 @@ Milestone (M1, M2, ...)
 - Status: COMPLETE
 - GitHub: issue #5
 - PR: #42
+- Human Setup:
+  - [x] Provision the Postgres test database on localhost:5432 — confirmed 2026-05-10 14:22 (Source: Architecture — Section 2)
+  - [x] Add JWT_SIGNING_SECRET to .env — confirmed 2026-05-10 14:25 (Source: Tests — tests/auth/token.test.ts)
 
 - [x] S1.1.1 — Email/password validation logic
   - Requirement: Users must log in with email and password
@@ -171,6 +225,10 @@ Milestone (M1, M2, ...)
 - Status: NOT STARTED
 - Integration: Google OAuth (see integration-registry.md)
 - GitHub: issue #9
+- Human Setup:
+  - [ ] Create Google Cloud project and OAuth 2.0 client (Source: Integration Registry — Google OAuth)
+  - [ ] Add redirect URIs to OAuth client (Source: Integration Registry — Google OAuth)
+  - [ ] Copy GOOGLE_OAUTH_CLIENT_ID and GOOGLE_OAUTH_CLIENT_SECRET into .env (Source: Tests — tests/auth/oauth.test.ts)
 
 - [ ] S1.2.1 — OAuth redirect flow
   - Requirement: Users can log in with Google
@@ -194,8 +252,8 @@ Every command references `_standards.md`, which contains:
 - Error handling requirements
 - Documentation requirements
 - Clean architecture enforcement rules
-- Integration registry enforcement rules
-- Task tracker standards and status rules
+- Integration registry enforcement rules (including the Human Setup hard gate on `/implement`)
+- Task tracker standards and status rules (including the `Human Setup:` field)
 - CI/CD considerations for team workflows
 
 ---
@@ -205,7 +263,8 @@ Every command references `_standards.md`, which contains:
 1. **No ambiguity reaches code.** Every question the agent asks you is designed to resolve a decision that would otherwise become a bug or a refactor.
 2. **Test-first, always.** Tests are written from the spec, not from the implementation. Code is written to satisfy tests.
 3. **Configuration before code.** Every external service, API key, database connection, and environment variable is documented in the Integration Registry before any implementation begins. The agent never invents configuration on the fly.
-4. **Task list is the source of truth.** The agent reads `docs/tasks.md` before writing code, checks off subtasks as tests pass, and links every completed subtask to its implementation file.
-5. **Documentation is a living artifact.** The `/docs-sync` command timestamps and audits every change. Spec drift is caught, not ignored.
-6. **Clean architecture is non-negotiable.** The architecture phase produces the folder structure, and that structure enforces separation of concerns regardless of project type.
-7. **Commands are independent but aware.** You can run any command at any time, but the agent will warn you if prerequisite artifacts are missing and recommend the correct order.
+4. **Human setup before code.** Every task's non-code prerequisites are surfaced, persisted, and confirmed before `/implement` writes a single line. The agent cannot create accounts, generate keys, or grant permissions for you — and it won't pretend it can. The pre-flight check is a hard stop with no overrides.
+5. **Task list is the source of truth.** The agent reads `docs/tasks.md` before writing code, checks off subtasks as tests pass, and links every completed subtask to its implementation file.
+6. **Documentation is a living artifact.** The `/docs-sync` command timestamps and audits every change. Spec drift is caught, not ignored.
+7. **Clean architecture is non-negotiable.** The architecture phase produces the folder structure, and that structure enforces separation of concerns regardless of project type.
+8. **Commands are independent but aware.** You can run any command at any time, but the agent will warn you if prerequisite artifacts are missing and recommend the correct order.
