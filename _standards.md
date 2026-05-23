@@ -20,9 +20,6 @@ PREREQUISITE_ARTIFACTS:
   /implement      → docs/architecture.md, docs/design.md, docs/integration-registry.md,
                      AND docs/tasks.md must exist and be signed off
                      AND relevant test files must exist for the target module
-                     AND the target task's Human Setup checklist must be fully
-                         confirmed ([x] on every item) before code generation
-                         (HARD GATE — see /implement Step 2)
   /docs-sync      → At least one implementation file must exist
   /audit          → docs/ folder must contain at least requirements, architecture,
                      design, tasks, and integration-registry specs
@@ -44,8 +41,6 @@ If prerequisites are missing, the agent MUST:
 1. List exactly which artifacts are missing
 2. Recommend which command to run first
 3. Ask the user if they want to proceed anyway (override) or follow the recommended order
-
-**Note**: The Human Setup checklist gate on `/implement` is the ONE prerequisite with no override path. Even if every other artifact exists and is signed off, `/implement` will refuse to generate code until every item in the target task's `Human Setup:` field is `[x]`-confirmed by the developer in chat.
 
 ---
 
@@ -137,8 +132,6 @@ These rules apply during `/implement`, `/test`, `/docs-sync`, and `/audit` phase
    - Warn the developer: "This module requires [service] which is not in the Integration Registry"
    - Recommend running `/integrations` to update the registry
    - Ask if the developer wants to update now or override
-5. Before implementation begins for any target task, the agent MUST run the Human Intervention Pre-Flight Check defined in `/implement` Step 2 and obtain developer confirmation on every checklist item. This is a hard gate with no overrides. The checklist draws from the Integration Registry, the test files for the target task, and the architecture/design specs — any non-code setup (account creation, API key generation, webhook configuration, local services, IAM grants, etc.) must be confirmed complete before code is written.
-6. If implementation reveals a missed human-setup item mid-task (e.g., a test fails because a service isn't actually running despite being marked `[x]`), the agent MUST stop, add the item back to the `Human Setup:` checklist as `[ ]`, and request reconfirmation before resuming.
 
 ### During Testing (`/test`)
 1. Test configuration MUST include mock/stub values for every required environment variable in the registry
@@ -191,16 +184,6 @@ When a subtask is completed by `/implement`, the agent records:
 - File paths are relative to the project root
 - If implementation spans multiple files, record the main entry point file
 
-### Human Setup Field
-The `Human Setup:` field is added to a task by `/implement` Step 2 before any code is written. It captures all non-code prerequisites that the developer must complete manually before implementation can succeed.
-
-- The field lives on the task (not on individual subtasks), since human setup typically applies across all subtasks in a task
-- Items are written as concrete, action-oriented statements, each tagged with their source (Registry / Tests / Architecture)
-- `[ ]` = pending; `[x]` = confirmed complete by the developer
-- Each confirmed item should include a confirmation timestamp inline: `[x] [item] — confirmed YYYY-MM-DD HH:MM`
-- The field is preserved on completed tasks as a historical record — do NOT delete it after a task is COMPLETE
-- On re-runs of `/implement`, the agent merges new items with existing ones rather than overwriting (preserves prior `[x]` confirmations)
-
 ### Traceability
 - Every subtask MUST reference the requirement(s) it satisfies from `docs/requirements.md`
 - Every requirement MUST map to at least one subtask — gaps are flagged during `/design`
@@ -212,9 +195,9 @@ The `Human Setup:` field is added to a task by `/implement` Step 2 before any co
 | `/design` | **Generates** the task list from requirements + architecture + design specs |
 | `/integrations` | May **append** integration-specific subtasks if external service setup requires implementation work |
 | `/test` | **Reads** the task list to know what to test; **writes** test file paths to subtask `Test:` fields |
-| `/implement` | **Reads** the task list before coding; **writes** the `Human Setup:` checklist on the target task in Step 2; **writes** `[x]`, `Impl:` paths, and status rollups after tests pass |
-| `/docs-sync` | **Validates** task list integrity — stale file refs, rollup errors, orphaned subtasks, and stale `Human Setup:` items that may no longer be applicable |
-| `/audit` | **Audits** full task list — completeness, traceability, file existence, status accuracy, and the integrity of `Human Setup:` records on completed tasks |
+| `/implement` | **Reads** the task list before coding; **writes** `[x]`, `Impl:` paths, and status rollups after tests pass |
+| `/docs-sync` | **Validates** task list integrity — stale file refs, rollup errors, orphaned subtasks |
+| `/audit` | **Audits** full task list — completeness, traceability, file existence, status accuracy |
 | `/github-init` | **Reads** the task list and **writes** `GitHub:` field references after creating milestones, issues, and sub-issues |
 | `/github-create-pr` | **Reads** the task list to find newly-completed work, **writes** `PR:` field references after opening PRs (auto-invokes `/github-init` logic for missing GitHub items) |
 | `/github-sync` | **Reads** the task list, identifies all gaps, and delegates to `/github-init` and `/github-create-pr` to fill them. **Writes** both `GitHub:` and `PR:` references as a result. |
